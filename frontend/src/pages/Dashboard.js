@@ -145,7 +145,8 @@ const Dashboard = ({ user, onSignOut }) => {
       const response = await callFetchJobEmails(scanDays);
       
       if (response.success) {
-        alert(`Successfully scanned emails! Found ${response.count} applications from the last ${response.daysBack} days.`);
+        const filteredInfo = response.filteredOut ? ` (${response.filteredOut} job board notifications filtered out)` : '';
+        alert(`Successfully scanned emails! Found ${response.count} job applications from the last ${response.daysBack} days${filteredInfo}.`);
         setLastScan(new Date());
       }
     } catch (error) {
@@ -366,7 +367,7 @@ const Dashboard = ({ user, onSignOut }) => {
               className="scan-button"
               disabled={loading || !gmailConnected}
             >
-              {loading ? 'Scanning...' : '🔍 Scan for Job Emails'}
+              {loading ? 'Scanning...' : '🔍 Scan for Job Applications'}
             </button>
           </div>
         </div>
@@ -382,10 +383,25 @@ const Dashboard = ({ user, onSignOut }) => {
         </div>
 
         {applications.length === 0 ? (
-          <div className="empty-state">
+                      <div className="empty-state">
             <div className="empty-icon">📭</div>
-            <h3>No Applications Yet</h3>
-            <p>Connect your Gmail account and scan for job-related emails to get started!</p>
+            <h3>No Job Applications Found</h3>
+            <p>Connect your Gmail account and scan for emails related to jobs you've <strong>applied to</strong>.</p>
+            <div className="help-text">
+              <h4>📝 What we track:</h4>
+              <ul>
+                <li>✅ Application confirmations</li>
+                <li>✅ Interview invitations</li>
+                <li>✅ Status updates from companies</li>
+                <li>✅ Offer letters and rejections</li>
+              </ul>
+              <h4>🚫 What we filter out:</h4>
+              <ul>
+                <li>❌ Job board notifications</li>
+                <li>❌ Job alerts from LinkedIn/Indeed</li>
+                <li>❌ General job recommendations</li>
+              </ul>
+            </div>
           </div>
         ) : (
           <div className="applications-table">
