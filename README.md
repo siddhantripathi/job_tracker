@@ -242,7 +242,7 @@ This project demonstrates modern web development practices:
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## 🙏 Tech stack
 
 - [Firebase](https://firebase.google.com/) for the comprehensive platform
 - [Google Gemini AI](https://gemini.google.com/) for intelligent analysis
