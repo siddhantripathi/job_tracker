@@ -1,0 +1,23 @@
+{
+  "name": "job-tracker",
+  "version": "1.0.0",
+  "description": "Job application tracking system with Gmail integration",
+  "main": "index.js",
+  "scripts": {
+    "start": "npm run start:frontend",
+    "start:frontend": "cd frontend && npm start",
+    "build": "cd frontend && npm run build",
+    "test": "cd frontend && npm test",
+    "deploy": "firebase deploy",
+    "deploy:functions": "firebase deploy --only functions",
+    "deploy:hosting": "firebase deploy --only hosting",
+    "emulators": "firebase emulators:start",
+    "logs": "firebase functions:log"
+  },
+  "keywords": ["job-tracker", "gmail", "firebase", "react"],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "firebase-tools": "^13.0.0"
+  }
+}

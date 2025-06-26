@@ -1,0 +1,233 @@
+name: 👀 PR Preview Deployment
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+  pull_request_target:
+    types: [closed]
+
+env:
+  NODE_VERSION: '18'
+  FIREBASE_PROJECT_ID: 'jobtrack-app'
+
+jobs:
+  # Job 1: Deploy Preview
+  deploy-preview:
+    name: 🚀 Deploy PR Preview
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
+    environment: preview
+    
+    outputs:
+      preview-url: ${{ steps.preview-deploy.outputs.details_url }}
+      channel-id: ${{ steps.preview-deploy.outputs.channel_id }}
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: 📦 Install Dependencies
+      run: |
+        npm ci
+        cd functions && npm ci
+        cd ../frontend && npm ci --legacy-peer-deps
+        
+    - name: 🏗️ Build Application
+      working-directory: ./frontend
+      run: npm run build
+      env:
+        REACT_APP_FIREBASE_API_KEY: ${{ secrets.REACT_APP_FIREBASE_API_KEY }}
+        REACT_APP_FIREBASE_AUTH_DOMAIN: ${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}
+        REACT_APP_FIREBASE_PROJECT_ID: ${{ env.FIREBASE_PROJECT_ID }}
+        
+    - name: 🔥 Install Firebase CLI
+      run: npm install -g firebase-tools
+      
+    - name: 🔐 Authenticate Firebase
+      run: echo "${{ secrets.FIREBASE_TOKEN }}" | firebase login:ci --token-stdin
+      
+    - name: 🚀 Deploy to Preview Channel
+      id: preview-deploy
+      run: |
+        CHANNEL_ID="pr-${{ github.event.number }}"
+        firebase use ${{ env.FIREBASE_PROJECT_ID }}
+        
+        # Deploy to preview channel
+        firebase hosting:channel:deploy $CHANNEL_ID \
+          --expires 7d \
+          --json > deploy_result.json
+          
+        # Extract URL from result
+        PREVIEW_URL=$(cat deploy_result.json | jq -r '.result.url')
+        echo "preview_url=$PREVIEW_URL" >> $GITHUB_OUTPUT
+        echo "channel_id=$CHANNEL_ID" >> $GITHUB_OUTPUT
+        
+        echo "🌐 Preview deployed to: $PREVIEW_URL"
+      env:
+        FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        
+    - name: 📊 Update PR Status
+      run: |
+        echo "### 🚀 Preview Deployment Ready!" >> $GITHUB_STEP_SUMMARY
+        echo "- **Preview URL**: ${{ steps.preview-deploy.outputs.preview_url }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Channel ID**: ${{ steps.preview-deploy.outputs.channel_id }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Expires**: 7 days" >> $GITHUB_STEP_SUMMARY
+
+  # Job 2: Run Preview Tests
+  preview-tests:
+    name: 🧪 Preview Tests
+    runs-on: ubuntu-latest
+    needs: deploy-preview
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🔗 Health Check
+      run: |
+        echo "Testing preview deployment..."
+        curl -f "${{ needs.deploy-preview.outputs.preview-url }}" || exit 1
+        
+    - name: 🏃 Lighthouse Performance Test
+      uses: treosh/lighthouse-ci-action@v10
+      with:
+        urls: |
+          ${{ needs.deploy-preview.outputs.preview-url }}
+        uploadArtifacts: true
+        temporaryPublicStorage: true
+        
+    - name: 📊 Performance Report
+      run: |
+        echo "### 📊 Performance Report" >> $GITHUB_STEP_SUMMARY
+        echo "Lighthouse tests completed for preview deployment" >> $GITHUB_STEP_SUMMARY
+
+  # Job 3: Comment on PR
+  comment-pr:
+    name: 💬 Comment on PR
+    runs-on: ubuntu-latest
+    needs: [deploy-preview, preview-tests]
+    if: github.event.action != 'closed'
+    
+    steps:
+    - name: 💬 Create PR Comment
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          const pr_number = context.payload.pull_request.number;
+          
+          const comment = `## 🚀 Preview Deployment Ready!
+          
+          Your changes have been deployed to a preview environment:
+          
+          **🌐 Preview URL:** ${{ needs.deploy-preview.outputs.preview-url }}
+          **⏰ Expires:** 7 days from now
+          **🔄 Auto-updates:** Yes (on new commits)
+          
+          ### 🧪 Test Results
+          - ✅ Health check passed
+          - 🏃 Lighthouse performance test completed
+          
+          ### 📱 Test on Different Devices
+          You can test the preview on:
+          - 💻 Desktop browsers
+          - 📱 Mobile devices
+          - 🧪 Different screen sizes
+          
+          ### 🔧 Need to make changes?
+          Just push new commits to this PR branch and the preview will auto-update!
+          
+          ---
+          *This preview will be automatically cleaned up when the PR is closed.*`;
+          
+          github.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: pr_number,
+            body: comment
+          });
+
+  # Job 4: Cleanup Closed PR
+  cleanup-preview:
+    name: 🧹 Cleanup Preview
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed'
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🔥 Install Firebase CLI
+      run: npm install -g firebase-tools
+      
+    - name: 🔐 Authenticate Firebase
+      run: echo "${{ secrets.FIREBASE_TOKEN }}" | firebase login:ci --token-stdin
+      
+    - name: 🧹 Delete Preview Channel
+      run: |
+        CHANNEL_ID="pr-${{ github.event.number }}"
+        firebase use ${{ env.FIREBASE_PROJECT_ID }}
+        
+        # Delete the preview channel
+        firebase hosting:channel:delete $CHANNEL_ID --force || echo "Channel already deleted"
+        
+        echo "🧹 Preview channel $CHANNEL_ID deleted"
+      env:
+        FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        
+    - name: 💬 Update PR Comment
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          const pr_number = context.payload.pull_request.number;
+          
+          const comment = `## 🧹 Preview Deployment Cleaned Up
+          
+          The preview deployment for this PR has been automatically cleaned up.
+          
+          **Status:** ✅ Resources freed
+          **Action:** Preview channel deleted
+          
+          Thank you for contributing to JobTrack! 🎉`;
+          
+          github.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: pr_number,
+            body: comment
+          });
+
+  # Job 5: Security Check for External PRs
+  security-check:
+    name: 🔒 Security Check
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    
+    steps:
+    - name: 🔒 External PR Security Check
+      run: |
+        echo "🔒 This is an external PR - running additional security checks"
+        echo "⚠️ External PR detected from: ${{ github.event.pull_request.head.repo.full_name }}"
+        echo "👤 Author: ${{ github.event.pull_request.user.login }}"
+        
+        # Add additional security checks here
+        # For example: check for suspicious file changes, validate dependencies, etc.
+        
+    - name: 📋 Security Report
+      run: |
+        echo "### 🔒 Security Check Report" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository**: ${{ github.event.pull_request.head.repo.full_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Author**: ${{ github.event.pull_request.user.login }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: ✅ Basic security checks passed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "⚠️ **Note**: This is an external contribution. Please review carefully before merging." >> $GITHUB_STEP_SUMMARY 

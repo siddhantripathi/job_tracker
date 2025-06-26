@@ -1,0 +1,291 @@
+name: 🔍 Continuous Integration
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+# Environment variables available to all jobs
+env:
+  NODE_VERSION: '18'
+  FIREBASE_PROJECT_ID: 'jobtrack-app'
+
+jobs:
+  # Job 1: Code Quality & Linting
+  code-quality:
+    name: 📝 Code Quality & Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: 📦 Install Root Dependencies
+      run: npm ci
+      
+    - name: 📦 Install Functions Dependencies
+      working-directory: ./functions
+      run: npm ci
+      
+    - name: 📦 Install Frontend Dependencies
+      working-directory: ./frontend
+      run: npm ci --legacy-peer-deps
+      
+    - name: 🔍 Lint Functions Code
+      working-directory: ./functions
+      run: npm run lint
+      
+    - name: 🔍 Lint Frontend Code
+      working-directory: ./frontend
+      run: npm run lint || true  # Allow to continue even if warnings
+      
+    - name: 🔒 Security Audit
+      run: |
+        npm audit --audit-level=moderate || true
+        cd functions && npm audit --audit-level=moderate || true
+        cd ../frontend && npm audit --audit-level=moderate || true
+
+  # Job 2: Unit Tests
+  unit-tests:
+    name: 🧪 Unit Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: 📦 Install Dependencies
+      run: |
+        npm ci
+        cd functions && npm ci
+        cd ../frontend && npm ci --legacy-peer-deps
+        
+    - name: 🧪 Run Frontend Tests
+      working-directory: ./frontend
+      run: npm test -- --coverage --watchAll=false
+      
+    - name: 📊 Upload Coverage Reports
+      uses: codecov/codecov-action@v3
+      with:
+        directory: ./frontend/coverage
+        flags: frontend
+        name: frontend-coverage
+        
+  # Job 3: Build Applications
+  build:
+    name: 🏗️ Build Applications
+    runs-on: ubuntu-latest
+    needs: [code-quality, unit-tests]
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: 📦 Install Dependencies
+      run: |
+        npm ci
+        cd functions && npm ci
+        cd ../frontend && npm ci --legacy-peer-deps
+        
+    - name: 🏗️ Build Functions
+      working-directory: ./functions
+      run: npm run build || echo "No build script for functions"
+      
+    - name: 🏗️ Build Frontend
+      working-directory: ./frontend
+      run: npm run build
+      env:
+        REACT_APP_FIREBASE_API_KEY: ${{ secrets.REACT_APP_FIREBASE_API_KEY }}
+        REACT_APP_FIREBASE_AUTH_DOMAIN: ${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}
+        REACT_APP_FIREBASE_PROJECT_ID: ${{ env.FIREBASE_PROJECT_ID }}
+        
+    - name: 📦 Upload Build Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-artifacts
+        path: |
+          frontend/build/
+          functions/lib/
+        retention-days: 7
+
+  # Job 4: Firebase Rules Validation
+  firebase-rules:
+    name: 🔥 Firebase Rules Validation
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        
+    - name: 🔥 Install Firebase CLI
+      run: npm install -g firebase-tools
+      
+    - name: ✅ Validate Firestore Rules
+      run: firebase firestore:rules:validate firestore.rules --project=${{ env.FIREBASE_PROJECT_ID }}
+      
+  # Job 5: Integration Tests with Emulators
+  integration-tests:
+    name: 🔗 Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: ☕ Setup Java (for Firebase Emulators)
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'adoptium'
+        java-version: '11'
+        
+    - name: 📦 Install Dependencies
+      run: |
+        npm ci
+        cd functions && npm ci
+        cd ../frontend && npm ci --legacy-peer-deps
+        
+    - name: 🔥 Install Firebase CLI
+      run: npm install -g firebase-tools
+      
+    - name: 📥 Download Build Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: build-artifacts
+        
+    - name: 🚀 Start Firebase Emulators
+      run: |
+        firebase emulators:start --only functions,firestore,auth --import=./emulator-data --export-on-exit &
+        sleep 30  # Wait for emulators to start
+        
+    - name: 🧪 Run Integration Tests
+      run: |
+        # Add integration tests here
+        echo "Running integration tests..."
+        # Example: curl tests, API endpoint tests, etc.
+        
+    - name: 🛑 Stop Emulators
+      run: pkill -f firebase
+
+  # Job 6: Security Scanning
+  security-scan:
+    name: 🔒 Security Scanning
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🔍 Run CodeQL Analysis
+      uses: github/codeql-action/init@v2
+      with:
+        languages: javascript
+        
+    - name: 🔍 Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+
+  # Job 7: Dependency Check
+  dependency-check:
+    name: 📋 Dependency Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🔍 Check for Vulnerabilities
+      uses: ossf/scorecard-action@v2.3.1
+      with:
+        results_file: results.sarif
+        results_format: sarif
+        
+    - name: 📊 Upload SARIF results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: results.sarif
+
+  # Job 8: Performance Tests
+  performance-test:
+    name: ⚡ Performance Tests
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 📥 Download Build Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: build-artifacts
+        
+    - name: ⚡ Bundle Size Analysis
+      working-directory: ./frontend
+      run: |
+        npm install -g bundlesize
+        npm run build
+        echo "Analyzing bundle size..."
+        ls -la build/static/js/
+        
+    - name: 🏃 Lighthouse CI
+      uses: treosh/lighthouse-ci-action@v10
+      with:
+        configPath: '.lighthouserc.json'
+        temporaryPublicStorage: true
+
+# Workflow Summary
+summary:
+  name: 📊 CI Summary
+  runs-on: ubuntu-latest
+  needs: [code-quality, unit-tests, build, firebase-rules, integration-tests]
+  if: always()
+  
+  steps:
+  - name: 📊 Report Status
+    run: |
+      echo "🔍 Code Quality: ${{ needs.code-quality.result }}"
+      echo "🧪 Unit Tests: ${{ needs.unit-tests.result }}"
+      echo "🏗️ Build: ${{ needs.build.result }}"
+      echo "🔥 Firebase Rules: ${{ needs.firebase-rules.result }}"
+      echo "🔗 Integration Tests: ${{ needs.integration-tests.result }}"
+      
+      if [[ "${{ needs.code-quality.result }}" == "failure" || "${{ needs.unit-tests.result }}" == "failure" || "${{ needs.build.result }}" == "failure" ]]; then
+        echo "❌ CI Pipeline Failed"
+        exit 1
+      else
+        echo "✅ CI Pipeline Passed"
+      fi 
